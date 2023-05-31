@@ -22,6 +22,20 @@ var books = []book{
 	{ID: "5", Title: "Tom Sawyer", Author: "Mark Twain", Price: 675},
 }
 
+func getBooks(context *gin.Context) {
+	context.IndentedJSON(http.StatusOK, books)
+
+}
+
+func getBookById(id string) (*book, error) {
+	for i, j := range books {
+		if j.ID == id {
+			return &books[i], nil
+		}
+	}
+	return nil, errors.New("book not found")
+}
+
 func getBook(context *gin.Context) {
 	id := context.Param("id")
 	book, err := getBookById(id)
@@ -35,8 +49,25 @@ func getBook(context *gin.Context) {
 
 }
 
-func getBooks(context *gin.Context) {
-	context.IndentedJSON(http.StatusOK, books)
+func updateBook(context *gin.Context) {
+
+	var updatedBook book
+	id := context.Param("id")
+	book, err := getBookById(id)
+
+	if er := context.BindJSON(&updatedBook); er != nil {
+		return
+	}
+
+	if err != nil {
+		context.IndentedJSON(http.StatusNotFound, gin.H{"message": "Book Not Found"})
+		return
+
+	}
+	book.Author = updatedBook.Author
+	book.Title = updatedBook.Title
+	book.Price = updatedBook.Price
+	context.IndentedJSON(http.StatusCreated, updatedBook)
 
 }
 
@@ -50,30 +81,6 @@ func addBook(context *gin.Context) {
 	books = append(books, newBook)
 
 	context.IndentedJSON(http.StatusCreated, newBook)
-
-}
-
-func getBookById(id string) (*book, error) {
-	for i, j := range books {
-		if j.ID == id {
-			return &books[i], nil
-		}
-	}
-	return nil, errors.New("book not found")
-}
-
-func updatePrice(context *gin.Context) {
-	id := context.Param("id")
-	book, err := getBookById(id)
-
-	if err != nil {
-		context.IndentedJSON(http.StatusNotFound, gin.H{"message": "Book Not Found"})
-		return
-
-	}
-
-	book.Price = book.Price * 0.75
-	context.IndentedJSON(http.StatusCreated, book)
 
 }
 
@@ -100,7 +107,7 @@ func main() {
 	router := gin.Default()
 	router.GET("/books", getBooks)
 	router.GET("/books/:id", getBook)
-	router.PATCH("/books/:id", updatePrice)
+	router.PATCH("/books/:id", updateBook)
 	router.POST("/books", addBook)
 	router.DELETE("/books/:id", deleteBook)
 	router.Run("localhost:9090")
