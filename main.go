@@ -1,115 +1,196 @@
 package main
 
 import (
-	"errors"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log"
+	"math/rand"
 	"net/http"
+	"strconv"
+	"time"
 
-	"github.com/gin-gonic/gin"
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/gorilla/mux"
 )
 
-type book struct {
-	ID     string  `json:"id"`
-	Title  string  `json:"title"`
-	Author string  `json:"author"`
-	Price  float64 `json:"price"`
+// data model
+type Book struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Author string `json:"author"`
+	Price  int    `json:"price"`
 }
 
-var books = []book{
-	{ID: "1", Title: "Harry Potter", Author: "JK Rowling", Price: 700},
-	{ID: "2", Title: "Percy Jackson", Author: "Rick Riordan", Price: 500},
-	{ID: "3", Title: "Secret Seven", Author: "Enid Blyton", Price: 300},
-	{ID: "4", Title: "The Room on the Roof", Author: "Ruskin Bond", Price: 250},
-	{ID: "5", Title: "Tom Sawyer", Author: "Mark Twain", Price: 675},
+// temporary database
+var DB *sql.DB
+
+// middleware
+func (c *Book) IsEmpty() bool {
+	return c.Title == ""
 }
 
-func getBooks(context *gin.Context) {
-	context.IndentedJSON(http.StatusOK, books)
-
-}
-
-func getBookById(id string) (*book, error) {
-	for i, j := range books {
-		if j.ID == id {
-			return &books[i], nil
-		}
-	}
-	return nil, errors.New("book not found")
-}
-
-func getBook(context *gin.Context) {
-	id := context.Param("id")
-	book, err := getBookById(id)
-
-	if err != nil {
-		context.IndentedJSON(http.StatusNotFound, gin.H{"message": "Book Not Found"})
-		return
-
-	}
-	context.IndentedJSON(http.StatusOK, book)
-
-}
-
-func updateBook(context *gin.Context) {
-
-	var updatedBook book
-	id := context.Param("id")
-	book, err := getBookById(id)
-
-	if er := context.BindJSON(&updatedBook); er != nil {
-		return
-	}
-
-	if err != nil {
-		context.IndentedJSON(http.StatusNotFound, gin.H{"message": "Book Not Found"})
-		return
-
-	}
-	book.Author = updatedBook.Author
-	book.Title = updatedBook.Title
-	book.Price = updatedBook.Price
-	context.IndentedJSON(http.StatusCreated, updatedBook)
-
-}
-
-func addBook(context *gin.Context) {
-	var newBook book
-
-	if err := context.BindJSON(&newBook); err != nil {
-		return
-	}
-
-	books = append(books, newBook)
-
-	context.IndentedJSON(http.StatusCreated, newBook)
-
-}
-
-func deleteBook(context *gin.Context) {
-	id := context.Param("id")
-	book, err := getBookById(id)
-
-	if err != nil {
-		context.IndentedJSON(http.StatusNotFound, gin.H{"message": "Book Not Found"})
-		return
-
-	}
-	for i, j := range books {
-		if j.ID == id {
-			books = append(books[:i], books[i+1:]...)
-
-		}
-	}
-	context.IndentedJSON(http.StatusOK, book)
-
-}
-
+// server entry point
 func main() {
-	router := gin.Default()
-	router.GET("/books", getBooks)
-	router.GET("/books/:id", getBook)
-	router.PATCH("/books/:id", updateBook)
-	router.POST("/books", addBook)
-	router.DELETE("/books/:id", deleteBook)
-	router.Run("localhost:9090")
+	fmt.Println("Api")
+	//establishing db connection
+	db, err := sql.Open("mysql", "root:aman2012@tcp(localhost:3306)/sakila")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer db.Close()
+
+	// Test the connection
+	err = db.Ping()
+	if err != nil {
+		log.Fatal(err)
+	}
+	DB = db
+	r := mux.NewRouter()
+	//seeding
+
+	//routing
+	r.HandleFunc("/", serveHome).Methods("GET")
+	r.HandleFunc("/books", getAllBooks).Methods("GET")
+	r.HandleFunc("/books/{id}", getOneBook).Methods("GET")
+	r.HandleFunc("/books", createBook).Methods("POST")
+	r.HandleFunc("/books/{id}", updateBook).Methods("PUT")
+	r.HandleFunc("/books/{id}", deleteOneBook).Methods("DELETE")
+
+	//listen to a port
+
+	log.Fatal(http.ListenAndServe(":9090", r))
+
+}
+
+// homepage
+func serveHome(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte("<h1> Hello to my home page</h1>"))
+}
+
+// fetch all books
+func getAllBooks(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("Get all the list of books")
+	w.Header().Set("Content-Type", "application/json")
+
+	rows, err := DB.Query("SELECT * FROM books")
+	if err != nil {
+		json.NewEncoder(w).Encode(err)
+		return
+	}
+
+	var books []Book
+	for rows.Next() {
+		var book Book
+		if err := rows.Scan(&book.ID, &book.Title, &book.Author, &book.Price); err != nil {
+			json.NewEncoder(w).Encode(err)
+			return
+		}
+		books = append(books, book)
+	}
+
+	json.NewEncoder(w).Encode(books)
+}
+
+// fetch one book
+func getBookByID(db *sql.DB, bookID string) (Book, error) {
+	query := "SELECT * FROM books WHERE id = ?"
+	row := DB.QueryRow(query, bookID)
+
+	var book Book
+	err := row.Scan(&book.ID, &book.Title, &book.Author, &book.Price)
+
+	if err != nil {
+		return Book{}, err
+	}
+
+	return book, nil
+}
+
+func getOneBook(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("Get one book with help of the id")
+	w.Header().Set("Content-Type", "application/json")
+
+	param := mux.Vars(r)
+
+	// Fetch a book by ID
+	bookID := param["id"]
+	book, err := getBookByID(DB, bookID)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
+	json.NewEncoder(w).Encode(book)
+}
+
+// create a book
+func createBook(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("Create one book")
+
+	w.Header().Set("Content-Type", "application/json")
+	if r.Body == nil {
+		json.NewEncoder(w).Encode("Please pass some value")
+		return
+	}
+
+	var book Book
+
+	_ = json.NewDecoder(r.Body).Decode(&book)
+
+	if book.IsEmpty() {
+		json.NewEncoder(w).Encode("No data inside")
+		return
+	}
+
+	rand.Seed(time.Now().Unix())
+	book.ID = strconv.Itoa(rand.Intn(100))
+	query := "INSERT INTO books (id,title, author,price) VALUES (?, ?,?,?)"
+	_, err := DB.Exec(query, book.ID, book.Title, book.Author, book.Price)
+	if err != nil {
+		json.NewEncoder(w).Encode(err)
+		return
+	}
+
+	json.NewEncoder(w).Encode(book)
+
+	return
+}
+
+// update a book
+func updateBook(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("Update one book")
+	var book Book
+	_ = json.NewDecoder(r.Body).Decode(&book)
+	w.Header().Set("Content-Type", "application/json")
+	param := mux.Vars(r)
+
+	query := "UPDATE books SET title = ? , author = ? , price = ? WHERE id = ?"
+	_, err := DB.Exec(query, book.Title, book.Author, book.Price, param["id"])
+	if err != nil {
+		json.NewEncoder(w).Encode(err)
+		return
+	}
+
+	json.NewEncoder(w).Encode(book)
+}
+
+// delete a book
+func deleteOneBook(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("Update one book")
+	w.Header().Set("Content-Type", "application/json")
+
+	param := mux.Vars(r)
+
+	query := "DELETE FROM books WHERE id = ?"
+	_, err := DB.Exec(query, param["id"])
+
+	if err != nil {
+		json.NewEncoder(w).Encode(err)
+		return
+	}
+
+	json.NewEncoder(w).Encode("Deleted")
 
 }
